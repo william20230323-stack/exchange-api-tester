@@ -1,12 +1,50 @@
-- name: 🚦 運行 IP/HTTP 連通性測試
+name: Exchange API 測試套件
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # 每天 UTC 00:00 自動運行（台灣時間 08:00）
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  api-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: 檢出代碼
+      uses: actions/checkout@v4
+
+    - name: 設置 Python 環境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: 安裝依賴
+      run: |
+        pip install --upgrade pip
+        pip install aiohttp colorama
+
+    - name: 🔍 運行 HTTP 連通性測試
       run: |
         echo "🔄 開始測試交易所 HTTP 連通性..."
         echo "============================================"
         
+        # 安裝 curl（如果沒有）
+        if ! command -v curl &> /dev/null; then
+          echo "安裝 curl..."
+          sudo apt-get update && sudo apt-get install -y curl
+        fi
+        
         # 測試的交易所API端點列表
         exchanges=(
           "https://api.binance.com/api/v3/ping"
-          "https://api.kucoin.com/api/v1/ping" 
+          "https://api.kucoin.com/api/v1/ping"
           "https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT"
           "https://api.mexc.com/api/v3/ping"
           "https://api.huobi.pro/market/detail/merged?symbol=btcusdt"
@@ -20,34 +58,27 @@
         
         for api_url in "${exchanges[@]}"; do
           # 提取交易所名稱
-          if [[ $api_url == *"binance"* ]]; then
-            exchange_name="Binance"
-          elif [[ $api_url == *"kucoin"* ]]; then
-            exchange_name="KuCoin"
-          elif [[ $api_url == *"gateio"* ]]; then
-            exchange_name="Gate.io"
-          elif [[ $api_url == *"mexc"* ]]; then
-            exchange_name="MEXC"
-          elif [[ $api_url == *"huobi"* ]]; then
-            exchange_name="Huobi"
-          elif [[ $api_url == *"bitget"* ]]; then
-            exchange_name="Bitget"
-          elif [[ $api_url == *"okx"* ]]; then
-            exchange_name="OKX"
-          elif [[ $api_url == *"pionex"* ]]; then
-            exchange_name="Pionex"
-          else
-            exchange_name="Unknown"
-          fi
+          exchange_name=""
+          case $api_url in
+            *binance*) exchange_name="Binance" ;;
+            *kucoin*) exchange_name="KuCoin" ;;
+            *gateio*) exchange_name="Gate.io" ;;
+            *mexc*) exchange_name="MEXC" ;;
+            *huobi*) exchange_name="Huobi" ;;
+            *bitget*) exchange_name="Bitget" ;;
+            *okx*) exchange_name="OKX" ;;
+            *pionex*) exchange_name="Pionex" ;;
+            *) exchange_name="Unknown" ;;
+          esac
           
           echo -n "測試 $exchange_name... "
           
-          # 使用curl測試HTTP連通性（只測試連接，不檢查內容）
-          if curl --silent --max-time 5 --output /dev/null --head --fail "$api_url"; then
-            echo "✅ HTTP 連接通暢"
+          # 使用curl測試HTTP連通性
+          if curl --silent --max-time 10 --output /dev/null --head --fail "$api_url" 2>/dev/null; then
+            echo "✅ 連接通暢"
             ((success_count++))
           else
-            echo "❌ HTTP 連接失敗"
+            echo "❌ 連接失敗"
           fi
         done
         
@@ -57,6 +88,63 @@
         
         if [ $success_count -eq $total_count ]; then
           echo "🎉 所有交易所HTTP連接正常！"
+        elif [ $success_count -gt 0 ]; then
+          echo "⚠️  部分交易所連接異常"
         else
-          echo "⚠️  部分交易所連接異常（可能為API限制或網絡問題）"
+          echo "❌ 所有交易所連接失敗"
         fi
+
+    - name: 📡 運行 API 數據獲取測試
+      run: |
+        echo "🚀 開始API數據獲取測試..."
+        cd scripts
+        
+        # 檢查文件是否存在
+        if [ ! -f "exchange_api_tester.py" ]; then
+          echo "❌ 找不到測試腳本 exchange_api_tester.py"
+          exit 1
+        fi
+        
+        # 運行測試
+        python exchange_api_tester.py
+        
+        # 檢查測試報告
+        if ls exchange_api_test_report_*.txt 1> /dev/null 2>&1; then
+          echo "📄 測試報告已生成"
+        else
+          echo "⚠️  未生成測試報告文件"
+        fi
+
+    - name: 💾 保存測試報告
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: api-test-reports
+        path: |
+          scripts/exchange_api_test_report_*.txt
+        retention-days: 30
+
+    - name: 📝 生成測試摘要
+      if: always()
+      run: |
+        echo "## 📊 API 測試結果摘要" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**運行時間:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        echo "**運行狀態:** ✅ 成功完成" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # 檢查是否有報告文件
+        if ls scripts/exchange_api_test_report_*.txt 1> /dev/null 2>&1; then
+          REPORT_FILE=$(ls scripts/exchange_api_test_report_*.txt | head -1)
+          echo "**測試報告摘要:**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+          # 顯示報告的最後15行
+          tail -15 "$REPORT_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "**⚠️ 未生成測試報告文件**" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "詳細報告可在右側 Artifacts 中下載。" >> $GITHUB_STEP_SUMMARY

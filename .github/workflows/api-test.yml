@@ -1,28 +1,375 @@
-name: CI
+name: 交易所API自動化測試
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 0 * * *'  # 每天UTC 00:00（台灣時間08:00）
+  workflow_dispatch:  # 允許手動觸發
 
 jobs:
-  test:
+  run-tests:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 10
+
     steps:
-    - name: Checkout
+    - name: 1. 檢出代碼
       uses: actions/checkout@v4
-    
-    - name: Setup Python
+
+    - name: 2. 設置Python環境
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-    
-    - name: Test
+        cache: 'pip'
+
+    - name: 3. 安裝Python依賴
       run: |
-        echo "GitHub Actions 工作正常！"
-        echo "當前目錄："
-        pwd
-        ls -la
+        pip install --upgrade pip
+        pip install aiohttp
+
+    - name: 4. 🔍 HTTP連通性測試
+      run: |
+        echo "🚀 開始交易所HTTP連通性測試"
+        echo "========================================"
+        
+        # 安裝必要的工具
+        sudo apt-get update -q
+        sudo apt-get install -y curl
+        
+        # 交易所API端點列表
+        exchanges=(
+          "Binance|https://api.binance.com/api/v3/ping"
+          "KuCoin|https://api.kucoin.com/api/v1/ping"
+          "Gate.io|https://api.gateio.ws/api/v4/spot/tickers"
+          "MEXC|https://api.mexc.com/api/v3/ping"
+          "Huobi|https://api.huobi.pro/market/detail/merged"
+          "Bitget|https://api.bitget.com/api/spot/v1/market/ticker"
+          "OKX|https://www.okx.com/api/v5/market/ticker"
+          "Pionex|https://api.pionex.com/api/v1/market/ticker"
+        )
+        
+        success_count=0
+        total_count=0
+        
+        for exchange_info in "${exchanges[@]}"; do
+          IFS='|' read -r name url <<< "$exchange_info"
+          ((total_count++))
+          
+          echo -n "測試 $name... "
+          
+          # 使用curl測試連通性（不檢查狀態碼，只檢查是否能連接）
+          if curl --silent --connect-timeout 10 --max-time 15 --output /dev/null "$url" 2>/dev/null; then
+            echo "✅ 連接通暢"
+            ((success_count++))
+          else
+            echo "❌ 連接失敗"
+          fi
+        done
+        
+        echo "========================================"
+        echo "📊 結果: $success_count/$total_count 個交易所可達"
+        echo "⏱️ 時間: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    - name: 5. 📡 API數據獲取測試
+      run: |
+        echo "🚀 開始API數據獲取測試"
+        
+        # 創建scripts目錄
+        mkdir -p scripts
+        
+        # 創建主測試腳本
+        cat > scripts/test_exchanges.py << 'EOF'
+#!/usr/bin/env python3
+"""
+交易所API數據獲取測試
+測試各交易所的BTC/USDT交易對數據
+"""
+
+import asyncio
+import aiohttp
+import time
+import json
+from datetime import datetime
+
+async def test_exchange(session, name, url, params=None):
+    """測試單個交易所API"""
+    start_time = time.time()
+    try:
+        full_url = url
+        if params:
+            # 簡單的參數拼接
+            param_str = '&'.join([f"{k}={v}" for k, v in params.items()])
+            full_url = f"{url}?{param_str}"
+        
+        async with session.get(full_url, timeout=aiohttp.ClientTimeout(total=15)) as response:
+            elapsed = (time.time() - start_time) * 1000  # 毫秒
+            
+            if response.status == 200:
+                try:
+                    data = await response.json()
+                    
+                    # 檢查數據有效性
+                    if isinstance(data, dict) and len(data) > 0:
+                        return {
+                            "name": name,
+                            "success": True,
+                            "response_time": elapsed,
+                            "status": response.status,
+                            "data_size": len(json.dumps(data)),
+                            "error": None
+                        }
+                    elif isinstance(data, list) and len(data) > 0:
+                        return {
+                            "name": name,
+                            "success": True,
+                            "response_time": elapsed,
+                            "status": response.status,
+                            "data_size": len(json.dumps(data)),
+                            "error": None
+                        }
+                    else:
+                        return {
+                            "name": name,
+                            "success": False,
+                            "response_time": elapsed,
+                            "status": response.status,
+                            "data_size": 0,
+                            "error": "無效的數據格式"
+                        }
+                        
+                except json.JSONDecodeError:
+                    return {
+                        "name": name,
+                        "success": False,
+                        "response_time": elapsed,
+                        "status": response.status,
+                        "data_size": 0,
+                        "error": "JSON解析失敗"
+                    }
+            else:
+                return {
+                    "name": name,
+                    "success": False,
+                    "response_time": elapsed,
+                    "status": response.status,
+                    "data_size": 0,
+                    "error": f"HTTP {response.status}"
+                }
+                
+    except asyncio.TimeoutError:
+        return {
+            "name": name,
+            "success": False,
+            "response_time": (time.time() - start_time) * 1000,
+            "status": "Timeout",
+            "data_size": 0,
+            "error": "請求超時"
+        }
+    except Exception as e:
+        return {
+            "name": name,
+            "success": False,
+            "response_time": (time.time() - start_time) * 1000,
+            "status": "Error",
+            "data_size": 0,
+            "error": str(type(e).__name__)
+        }
+
+async def main():
+    """主測試函數"""
+    print("=" * 60)
+    print("📊 交易所API數據獲取測試")
+    print(f"🕒 開始時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    
+    # 交易所API配置
+    exchanges = [
+        {
+            "name": "Binance",
+            "url": "https://api.binance.com/api/v3/ticker/24hr",
+            "params": {"symbol": "BTCUSDT"}
+        },
+        {
+            "name": "KuCoin",
+            "url": "https://api.kucoin.com/api/v1/market/orderbook/level1",
+            "params": {"symbol": "BTC-USDT"}
+        },
+        {
+            "name": "Gate.io",
+            "url": "https://api.gateio.ws/api/v4/spot/tickers",
+            "params": {"currency_pair": "BTC_USDT"}
+        },
+        {
+            "name": "MEXC",
+            "url": "https://api.mexc.com/api/v3/ticker/24hr",
+            "params": {"symbol": "BTCUSDT"}
+        },
+        {
+            "name": "Huobi",
+            "url": "https://api.huobi.pro/market/detail/merged",
+            "params": {"symbol": "btcusdt"}
+        },
+        {
+            "name": "Bitget",
+            "url": "https://api.bitget.com/api/spot/v1/market/ticker",
+            "params": {"symbol": "BTCUSDT"}
+        },
+        {
+            "name": "OKX",
+            "url": "https://www.okx.com/api/v5/market/ticker",
+            "params": {"instId": "BTC-USDT"}
+        },
+        {
+            "name": "Pionex",
+            "url": "https://api.pionex.com/api/v1/market/ticker",
+            "params": {"symbol": "BTC_USDT"}
+        }
+    ]
+    
+    print(f"🔍 將測試 {len(exchanges)} 個交易所\n")
+    
+    results = []
+    
+    # 創建HTTP會話，限制並發連接
+    connector = aiohttp.TCPConnector(limit=3)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        for exchange in exchanges:
+            print(f"正在測試 {exchange['name']}...")
+            result = await test_exchange(
+                session, 
+                exchange['name'], 
+                exchange['url'], 
+                exchange.get('params')
+            )
+            results.append(result)
+            
+            # 顯示結果
+            if result["success"]:
+                print(f"  ✅ 成功 ({result['response_time']:.0f}ms)")
+            else:
+                print(f"  ❌ 失敗: {result['error']} ({result['response_time']:.0f}ms)")
+            
+            # 避免請求過快
+            await asyncio.sleep(1)
+    
+    print("\n" + "=" * 60)
+    
+    # 統計結果
+    successful = [r for r in results if r["success"]]
+    success_rate = (len(successful) / len(results)) * 100
+    
+    # 計算平均響應時間
+    if successful:
+        avg_response = sum(r["response_time"] for r in successful) / len(successful)
+        best_exchange = min(successful, key=lambda x: x["response_time"])
+    else:
+        avg_response = 0
+        best_exchange = None
+    
+    print(f"📈 測試完成!")
+    print(f"✅ 成功: {len(successful)}/{len(results)}")
+    print(f"📊 成功率: {success_rate:.1f}%")
+    
+    if successful:
+        print(f"⏱️  平均響應時間: {avg_response:.0f}ms")
+        print(f"🏆 最佳表現: {best_exchange['name']} ({best_exchange['response_time']:.0f}ms)")
+    
+    # 生成詳細報告
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_filename = f"exchange_test_report_{timestamp}.txt"
+    
+    report = [
+        "=" * 50,
+        "交易所API測試報告",
+        f"生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"測試交易所數量: {len(exchanges)}",
+        "=" * 50,
+        ""
+    ]
+    
+    # 詳細結果
+    for result in results:
+        status = "✅ 成功" if result["success"] else "❌ 失敗"
+        report.append(f"{result['name']:12} {status}")
+        report.append(f"    響應時間: {result['response_time']:.0f}ms")
+        report.append(f"    狀態: {result['status']}")
+        if result["error"]:
+            report.append(f"    錯誤: {result['error']}")
+        if result["success"] and result["data_size"] > 0:
+            report.append(f"    數據大小: {result['data_size']} bytes")
+        report.append("")
+    
+    report.append("=" * 50)
+    report.append(f"總成功率: {success_rate:.1f}% ({len(successful)}/{len(results)})")
+    
+    if successful:
+        report.append(f"平均響應時間: {avg_response:.0f}ms")
+        if best_exchange:
+            report.append(f"推薦交易所: {best_exchange['name']} (最快響應)")
+    
+    report.append("=" * 50)
+    
+    # 保存報告
+    with open(report_filename, 'w', encoding='utf-8') as f:
+        f.write("\n".join(report))
+    
+    print(f"\n📄 報告已保存: {report_filename}")
+    print(f"🕒 結束時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+EOF
+        
+        # 設置執行權限並運行
+        chmod +x scripts/test_exchanges.py
+        cd scripts
+        python test_exchanges.py
+
+    - name: 6. 💾 保存測試報告
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: exchange-test-reports
+        path: |
+          exchange_test_report_*.txt
+          scripts/exchange_test_report_*.txt
+        retention-days: 30
+
+    - name: 7. 📝 生成測試摘要
+      if: always()
+      run: |
+        echo "## 📊 交易所API測試結果" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**測試完成時間:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # 查找最新的測試報告
+        latest_report=""
+        for report in exchange_test_report_*.txt scripts/exchange_test_report_*.txt; do
+          if [ -f "$report" ]; then
+            latest_report="$report"
+            break
+          fi
+        done
+        
+        if [ -n "$latest_report" ]; then
+          echo "**測試結果摘要:**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          # 顯示報告的核心部分
+          head -30 "$latest_report" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "完整報告可在右側 Artifacts 下載。" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "**⚠️ 未生成測試報告**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "請檢查上方日誌查看詳細錯誤。" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*下次測試將在每日 UTC 00:00 自動執行*" >> $GITHUB_STEP_SUMMARY

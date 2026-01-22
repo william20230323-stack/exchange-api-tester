@@ -1,4 +1,4 @@
-name: 交易所API測試
+name: 交易所API连通性测试
 
 on:
   push:
@@ -6,51 +6,124 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test-exchanges:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 5  # 设置超时，防止卡住
+
     steps:
-    - name: 檢出代碼
+    # 第一步：获取代码
+    - name: 🛒 检出代码
       uses: actions/checkout@v4
-    
-    - name: 設置Python
+
+    # 第二步：准备Python环境
+    - name: 🐍 设置Python 3.10
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-    
-    - name: 安裝依賴
-      run: pip install aiohttp
-    
-    - name: 運行測試
+
+    # 第三步：安装必要的Python包
+    - name: 📦 安装依赖
       run: |
-        echo "🎯 開始交易所API測試..."
-        echo "==============================="
+        pip install --upgrade pip
+        pip install aiohttp
+
+    # 第四步：运行核心测试脚本
+    - name: 🚀 运行API测试
+      run: |
+        echo "开始测试多个交易所API连通性..."
+        echo "======================================"
         
-        # 創建簡單測試腳本
-        cat > test.py << 'EOF'
+        # 将测试脚本直接内嵌在工作流中，避免外部文件依赖
+        python3 << 'EOF'
 import asyncio
 import aiohttp
 import time
+from datetime import datetime
+
+async def test_single_exchange(session, name, url):
+    """测试单个交易所"""
+    start_time = time.time()
+    try:
+        # 设置10秒超时，避免长时间等待
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with session.get(url, timeout=timeout) as response:
+            elapsed_ms = (time.time() - start_time) * 1000
+            
+            # 判断成功条件：能收到响应（即使是非200状态码也视为网络连通）
+            if response.status == 200:
+                return {"name": name, "ok": True, "time": elapsed_ms, "msg": f"HTTP {response.status}"}
+            else:
+                # 能收到响应但状态码非200，也视为网络可连通
+                return {"name": name, "ok": True, "time": elapsed_ms, "msg": f"HTTP {response.status} (状态异常但网络通)"}
+    except asyncio.TimeoutError:
+        elapsed_ms = (time.time() - start_time) * 1000
+        return {"name": name, "ok": False, "time": elapsed_ms, "msg": "超时"}
+    except Exception as e:
+        elapsed_ms = (time.time() - start_time) * 1000
+        return {"name": name, "ok": False, "time": elapsed_ms, "msg": f"{type(e).__name__}"}
 
 async def main():
-    print("測試開始...")
-    exchanges = [
+    print(f"测试开始时间: {datetime.now().strftime('%H:%M:%S')}")
+    print("--------------------------------------")
+    
+    # 要测试的交易所API列表（使用稳定、简单的接口）
+    exchanges_to_test = [
         ("Binance", "https://api.binance.com/api/v3/ping"),
         ("KuCoin", "https://api.kucoin.com/api/v1/ping"),
+        ("Gate.io", "https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT"),
+        ("MEXC", "https://api.mexc.com/api/v3/ping"),
+        ("OKX", "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"),
     ]
     
-    async with aiohttp.ClientSession() as session:
-        for name, url in exchanges:
-            start = time.time()
-            try:
-                async with session.get(url, timeout=5) as resp:
-                    elapsed = time.time() - start
-                    print(f"✅ {name}: {elapsed*1000:.0f}ms")
-            except Exception as e:
-                print(f"❌ {name}: 錯誤")
+    all_results = []
+    
+    # 创建HTTP会话，并限制并发连接数，避免被API限制
+    connector = aiohttp.TCPConnector(limit=3)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        # 逐个测试，而非并发，提高稳定性
+        for exchange in exchanges_to_test:
+            name, url = exchange
+            result = await test_single_exchange(session, name, url)
+            all_results.append(result)
+            
+            # 立即打印结果，方便实时查看
+            status_icon = "✅" if result["ok"] else "❌"
+            print(f"{status_icon} {name:12} {result['msg']:30} ({result['time']:5.0f} ms)")
+            
+            # 每个请求之间间隔0.5秒，礼貌访问
+            await asyncio.sleep(0.5)
+    
+    # 打印汇总报告
+    print("\n======================================")
+    print("📊 测试结果汇总")
+    print("======================================")
+    
+    successful = [r for r in all_results if r["ok"]]
+    success_rate = (len(successful) / len(all_results)) * 100
+    
+    print(f"测试总数: {len(all_results)}")
+    print(f"成功数量: {len(successful)}")
+    print(f"成功率: {success_rate:.1f}%")
+    
+    if successful:
+        avg_time = sum(r["time"] for r in successful) / len(successful)
+        fastest = min(successful, key=lambda x: x["time"])
+        print(f"平均响应时间: {avg_time:.0f} ms")
+        print(f"最快响应: {fastest['name']} ({fastest['time']:.0f} ms)")
+    
+    print(f"\n测试结束时间: {datetime.now().strftime('%H:%M:%S')}")
 
-asyncio.run(main())
+# 运行主函数
+if __name__ == "__main__":
+    asyncio.run(main())
 EOF
         
-        python test.py
-        echo "測試完成！"
+        echo "======================================"
+        echo "API连通性测试执行完毕！"
+
+    # 第五步：总是执行的成功提示
+    - name: ✅ 测试完成
+      if: always()  # 即使前面步骤失败，也执行此步骤
+      run: |
+        echo "本次GitHub Actions运行已结束。"
+        echo "请查看上方『运行API测试』步骤的输出，获取详细结果。"

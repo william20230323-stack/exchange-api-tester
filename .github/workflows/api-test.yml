@@ -1,9 +1,32 @@
-name: Simple Test
+name: Exchange API Test
 on: push
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - run: |
-          curl -s -o /dev/null -w "%{http_code}" https://api.binance.com/api/v3/ping
-          echo " Binance API Tested"
+      - name: Test Exchange APIs
+        run: |
+          echo "=== Testing Exchange APIs ==="
+          
+          echo "1. Testing Binance..."
+          if curl -s --max-time 5 https://api.binance.com/api/v3/ping > /dev/null; then
+            echo "✓ Binance: OK"
+          else
+            echo "✗ Binance: FAILED"
+          fi
+          
+          echo "2. Testing Coinbase..."
+          if curl -s --max-time 5 https://api.coinbase.com/v2/time > /dev/null; then
+            echo "✓ Coinbase: OK"
+          else
+            echo "✗ Coinbase: FAILED"
+          fi
+          
+          echo "3. Testing Kraken..."
+          if curl -s --max-time 5 https://api.kraken.com/0/public/Time > /dev/null; then
+            echo "✓ Kraken: OK"
+          else
+            echo "✗ Kraken: FAILED"
+          fi
+          
+          echo "=== Test Complete ==="

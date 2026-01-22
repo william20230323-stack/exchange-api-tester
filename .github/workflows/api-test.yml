@@ -2,15 +2,15 @@ name: Exchange API 測試套件
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
-  api-test:
+  run-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -28,17 +28,16 @@ jobs:
         pip install --upgrade pip
         pip install aiohttp
 
-    - name: 🔍 運行 HTTP 連通性測試
+    - name: 🔍 測試 HTTP 連通性
       run: |
         echo "開始測試交易所 HTTP 連通性..."
         echo "========================================"
         
-        # 安裝 curl（如果沒有）
-        if ! command -v curl &> /dev/null; then
-          sudo apt-get update && sudo apt-get install -y curl
-        fi
+        # 更新並安裝 curl
+        sudo apt-get update -q
+        sudo apt-get install -y curl
         
-        # 交易所列表 - 改為簡單的GET請求，不檢查狀態碼
+        # 交易所 API 列表
         declare -A exchanges=(
           ["Binance"]="https://api.binance.com/api/v3/ping"
           ["KuCoin"]="https://api.kucoin.com/api/v1/ping"
@@ -59,89 +58,40 @@ jobs:
           
           echo -n "測試 $name... "
           
-          # 簡單測試：只檢查是否能建立連接，不檢查響應內容
-          # 使用 --connect-timeout 而不是 --max-time
-          # 使用 --silent 隱藏進度，使用 --output /dev/null 丟棄響應
-          # 使用 --head 只請求頭部，減少數據傳輸
-          # 不使用 --fail，這樣即使返回錯誤狀態碼也會繼續
-          if curl --silent --connect-timeout 3 --max-time 5 --head "$url" &>/dev/null; then
-            echo "✅ 連接通暢"
+          # 簡單的連接測試，不檢查狀態碼
+          if curl --silent --connect-timeout 5 --max-time 10 --output /dev/null "$url"; then
+            echo "✅ 成功"
             ((success_count++))
           else
-            echo "❌ 連接失敗"
+            echo "❌ 失敗"
           fi
         done
         
         echo "========================================"
-        echo "結果: $success_count/$total_count 個交易所可達"
-        echo "時間: $(date '+%Y-%m-%d %H:%M:%S')"
-        
-        # 即使有失敗，也繼續執行後續步驟
-        echo "HTTP連通性測試完成，繼續執行API測試..."
+        echo "HTTP連通性結果: $success_count/$total_count"
+        echo "測試時間: $(date '+%Y-%m-%d %H:%M:%S')"
 
-    - name: 📡 運行 API 數據獲取測試
+    - name: 📡 運行 API 數據測試
       run: |
-        echo "開始 API 數據獲取測試..."
-        echo "創建測試腳本..."
+        echo "開始 API 數據測試..."
         
-        # 創建scripts目錄
+        # 創建 scripts 目錄
         mkdir -p scripts
         
-        # 創建更簡單穩定的測試腳本
-        cat > scripts/simple_test.py << 'EOF'
+        # 創建簡單的 Python 測試腳本
+        cat > scripts/test_exchanges.py << 'EOF'
 #!/usr/bin/env python3
-"""
-極簡API測試 - 穩定性優先
-"""
-
 import asyncio
 import aiohttp
 import time
 from datetime import datetime
 
-async def test_exchange(session, name, url):
-    """測試單個交易所"""
-    start_time = time.time()
-    try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-            elapsed = (time.time() - start_time) * 1000  # 轉為毫秒
-            
-            # 只要沒有拋出異常，就認為連接成功
-            # 不檢查狀態碼，因為有些API可能返回非200但連接是通的
-            print(f"✅ {name}: 連接成功 ({elapsed:.0f}ms)")
-            return {
-                "name": name,
-                "success": True,
-                "response_time": elapsed,
-                "status": response.status
-            }
-    except asyncio.TimeoutError:
-        elapsed = (time.time() - start_time) * 1000
-        print(f"❌ {name}: 連接超時 ({elapsed:.0f}ms)")
-        return {
-            "name": name,
-            "success": False,
-            "response_time": elapsed,
-            "status": "Timeout"
-        }
-    except Exception as e:
-        elapsed = (time.time() - start_time) * 1000
-        print(f"❌ {name}: 連接錯誤 - {type(e).__name__} ({elapsed:.0f}ms)")
-        return {
-            "name": name,
-            "success": False,
-            "response_time": elapsed,
-            "status": str(type(e).__name__)
-        }
-
 async def main():
-    """主測試函數"""
     print("=" * 50)
-    print("交易所API連接測試")
+    print("交易所 API 測試")
     print(f"開始時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
     
-    # 只測試最關鍵的API端點
     exchanges = [
         ("Binance", "https://api.binance.com/api/v3/ping"),
         ("KuCoin", "https://api.kucoin.com/api/v1/ping"),
@@ -153,103 +103,86 @@ async def main():
         ("Pionex", "https://api.pionex.com/api/v1/market/ticker?symbol=BTC_USDT"),
     ]
     
-    print(f"將測試 {len(exchanges)} 個交易所...\n")
+    results = []
     
-    # 限制並發數，避免觸發API限制
-    connector = aiohttp.TCPConnector(limit=2)
-    
-    async with aiohttp.ClientSession(connector=connector) as session:
-        results = []
+    async with aiohttp.ClientSession() as session:
         for name, url in exchanges:
-            result = await test_exchange(session, name, url)
-            results.append(result)
-            await asyncio.sleep(0.5)  # 增加間隔，避免請求過快
+            start = time.time()
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    elapsed = time.time() - start
+                    if resp.status == 200:
+                        print(f"✅ {name}: 成功 ({elapsed*1000:.0f}ms)")
+                        results.append((name, True, elapsed))
+                    else:
+                        print(f"⚠️  {name}: HTTP {resp.status} ({elapsed*1000:.0f}ms)")
+                        results.append((name, False, elapsed))
+            except Exception as e:
+                elapsed = time.time() - start
+                print(f"❌ {name}: {type(e).__name__} ({elapsed*1000:.0f}ms)")
+                results.append((name, False, elapsed))
     
-    print("\n" + "=" * 50)
-    
-    # 統計結果
-    success_results = [r for r in results if r["success"]]
-    success_rate = (len(success_results) / len(results)) * 100
-    
-    print(f"測試完成!")
-    print(f"成功率: {len(success_results)}/{len(results)} ({success_rate:.1f}%)")
+    print("=" * 50)
     
     # 生成報告
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"api_test_report_{timestamp}.txt"
+    success = sum(1 for r in results if r[1])
+    total = len(results)
     
+    report = [
+        "=" * 40,
+        "交易所 API 測試報告",
+        f"時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "=" * 40
+    ]
+    
+    for name, ok, elapsed in results:
+        status = "✅ 成功" if ok else "❌ 失敗"
+        report.append(f"{name:10} {status} ({elapsed*1000:.0f}ms)")
+    
+    report.append("=" * 40)
+    report.append(f"成功率: {success}/{total} ({success/total*100:.1f}%)")
+    report.append("=" * 40)
+    
+    # 保存報告
+    filename = f"api_test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(filename, 'w') as f:
-        f.write("=" * 40 + "\n")
-        f.write("交易所API連接測試報告\n")
-        f.write(f"時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write("=" * 40 + "\n")
-        
-        for result in results:
-            status = "✅ 成功" if result["success"] else "❌ 失敗"
-            f.write(f"{result['name']:10} {status} ({result['response_time']:.0f}ms)\n")
-        
-        f.write("=" * 40 + "\n")
-        f.write(f"成功率: {len(success_results)}/{len(results)} ({success_rate:.1f}%)\n")
-        f.write("=" * 40 + "\n")
+        f.write("\n".join(report))
     
     print(f"報告已保存: {filename}")
-    print(f"結束時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 50)
+    print(f"成功率: {success}/{total} ({success/total*100:.1f}%)")
 
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
         
-        # 設置執行權限
-        chmod +x scripts/simple_test.py
-        
         # 運行測試
-        echo "運行測試腳本..."
         cd scripts
-        python simple_test.py
+        python test_exchanges.py
 
     - name: 💾 保存測試報告
       uses: actions/upload-artifact@v4
-      if: always()
       with:
-        name: api-test-reports
+        name: api-test-results
         path: |
           scripts/api_test_report_*.txt
           api_test_report_*.txt
         retention-days: 30
 
     - name: 📝 生成測試摘要
-      if: always()
       run: |
-        echo "## API 測試結果摘要" >> $GITHUB_STEP_SUMMARY
+        echo "## 📊 API 測試結果摘要" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**運行時間:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        echo "**完成時間:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # 檢查報告文件
-        report_count=0
-        
-        # 檢查多個可能的路徑
-        for report_file in scripts/api_test_report_*.txt api_test_report_*.txt; do
-          if [ -f "$report_file" ]; then
-            ((report_count++))
+        # 尋找報告文件
+        for report in scripts/api_test_report_*.txt api_test_report_*.txt; do
+          if [ -f "$report" ]; then
             echo "**測試結果:**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            cat "$report_file" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat "$report" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
             break
           fi
         done
-        
-        if [ $report_count -eq 0 ]; then
-          echo "**⚠️ 未生成測試報告**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "可能的原因：" >> $GITHUB_STEP_SUMMARY
-          echo "1. 測試腳本執行失敗" >> $GITHUB_STEP_SUMMARY
-          echo "2. 網絡連接問題" >> $GITHUB_STEP_SUMMARY
-          echo "3. 文件權限問題" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "詳細日誌請查看上方的運行記錄。" >> $GITHUB_STEP_SUMMARY

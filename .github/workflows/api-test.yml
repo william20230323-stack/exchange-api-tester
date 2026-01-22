@@ -1,0 +1,105 @@
+name: Exchange API 測試套件
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  api-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: 檢出代碼
+      uses: actions/checkout@v4
+
+    - name: 設置 Python 環境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: 安裝依賴
+      run: |
+        pip install --upgrade pip
+        pip install -r scripts/requirements.txt
+
+    - name: 🚦 運行 IP 連通性測試
+      run: |
+        echo "🔄 開始測試交易所 IP 連通性..."
+        echo "============================================"
+        
+        exchanges=(
+          "api.binance.com"
+          "api.kucoin.com" 
+          "api.gateio.ws"
+          "api.mexc.com"
+          "api.huobi.pro"
+          "api.bitget.com"
+          "www.okx.com"
+        )
+        
+        success_count=0
+        total_count=${#exchanges[@]}
+        
+        for exchange in "${exchanges[@]}"; do
+          if ping -c 2 -W 3 "$exchange" > /dev/null 2>&1; then
+            echo "✅ $exchange -> 連接通暢"
+            ((success_count++))
+          else
+            echo "❌ $exchange -> 連接失敗"
+          fi
+        done
+        
+        echo "============================================"
+        echo "📊 測試結果: $success_count/$total_count 個交易所可達"
+        echo "⏱️ 測試時間: $(date '+%Y-%m-%d %H:%M:%S')"
+        
+        if [ $success_count -eq $total_count ]; then
+          echo "🎉 所有交易所IP連接正常！"
+        else
+          echo "⚠️  部分交易所連接異常"
+        fi
+
+    - name: 📡 運行 API 數據獲取測試
+      run: |
+        echo "🚀 開始API數據獲取測試..."
+        cd scripts
+        python exchange_api_tester.py
+
+    - name: 💾 保存測試報告
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: api-test-reports
+        path: |
+          scripts/exchange_api_test_report_*.txt
+        retention-days: 30
+
+    - name: 📝 生成測試摘要
+      if: always()
+      run: |
+        echo "## 📊 API 測試結果摘要" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**運行時間:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # 檢查是否有報告文件
+        if ls scripts/exchange_api_test_report_*.txt 1> /dev/null 2>&1; then
+          REPORT_FILE=$(ls scripts/exchange_api_test_report_*.txt | head -1)
+          echo "**測試報告已生成**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+          tail -10 "$REPORT_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ 未生成測試報告文件" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "詳細報告可在 Artifacts 中下載。" >> $GITHUB_STEP_SUMMARY

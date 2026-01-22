@@ -23,14 +23,14 @@ jobs:
         python-version: '3.9'
         
     - name: 3. 安裝必要依賴
-      run: pip install aiohttp requests
+      run: pip install aiohttp
         
     - name: 4. 執行API連通性檢查
       run: |
         echo "開始交易所API連通性測試"
         echo "================================"
         
-        python3 -c "
+        cat > test_api.py << 'EOF'
 import asyncio
 import aiohttp
 import time
@@ -61,7 +61,10 @@ async def test_exchange(session, name, url):
         return {'name': name, 'status': 'timeout', 'response_time': elapsed, 'status_code': None}
     except Exception as e:
         elapsed = (time.time() - start_time) * 1000
-        print(f'✗ {name}: 錯誤 - {str(e)[:50]}... (耗時: {elapsed:.0f}ms)')
+        error_msg = str(e)
+        if len(error_msg) > 50:
+            error_msg = error_msg[:50] + '...'
+        print(f'✗ {name}: 錯誤 - {error_msg} (耗時: {elapsed:.0f}ms)')
         return {'name': name, 'status': 'error', 'response_time': elapsed, 'status_code': None, 'error': str(e)}
 
 async def main():
@@ -106,7 +109,8 @@ async def main():
         print('\n失敗的交易所:')
         for r in results:
             if r['status'] != 'success':
-                print(f'  • {r[\"name\"]}: {r[\"status\"]} (狀態碼: {r.get(\"status_code\", \"N/A\")})')
+                status_code = r.get('status_code', 'N/A')
+                print(f'  • {r["name"]}: {r["status"]} (狀態碼: {status_code})')
     
     # 計算平均響應時間
     successful_times = [r['response_time'] for r in results if r['status'] == 'success']
@@ -121,7 +125,9 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-"
+EOF
+
+        python3 test_api.py
         
     - name: 5. 生成測試報告
       if: always()

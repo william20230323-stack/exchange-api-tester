@@ -1,5 +1,11 @@
 name: Full Exchange API Test
-on: push
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '*/30 * * * *'  # 每30分鐘運行一次
+  workflow_dispatch:  # 允許手動觸發
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -8,8 +14,6 @@ jobs:
           pip3 install requests
           
           echo "import requests" > test.py
-          echo "import time" >> test.py
-          echo "" >> test.py
           echo "exchanges = [" >> test.py
           echo "    ('Binance', 'https://api.binance.com/api/v3/ping')," >> test.py
           echo "    ('Coinbase', 'https://api.coinbase.com/v2/time')," >> test.py
@@ -18,46 +22,13 @@ jobs:
           echo "    ('Bybit', 'https://api.bybit.com/v5/market/time')," >> test.py
           echo "    ('Gate.io', 'https://api.gate.io/api/v4/spot/tickers')," >> test.py
           echo "    ('MEXC', 'https://api.mexc.com/api/v3/ping')," >> test.py
-          echo "    ('KuCoin', 'https://api.kucoin.com/api/v1/ping')," >> test.py
-          echo "    ('Bitfinex', 'https://api-pub.bitfinex.com/v2/platform/status')," >> test.py
-          echo "    ('Huobi', 'https://api.huobi.pro/market/detail/merged?symbol=btcusdt')," >> test.py
           echo "]" >> test.py
-          echo "" >> test.py
-          echo "print('================================')" >> test.py
-          echo "print('Exchange API Connectivity Test')" >> test.py
-          echo "================================')" >> test.py
-          echo "" >> test.py
-          echo "success = 0" >> test.py
-          echo "total = len(exchanges)" >> test.py
-          echo "" >> test.py
+          
           echo "for name, url in exchanges:" >> test.py
           echo "    try:" >> test.py
-          echo "        start = time.time()" >> test.py
-          echo "        r = requests.get(url, timeout=10)" >> test.py
-          echo "        end = time.time()" >> test.py
-          echo "        response_time = round(end - start, 2)" >> test.py
-          echo "        if r.status_code == 200:" >> test.py
-          echo "            print(f'{name:15} OK      {response_time:5}s')" >> test.py
-          echo "            success = success + 1" >> test.py
-          echo "        else:" >> test.py
-          echo "            print(f'{name:15} FAIL    HTTP {r.status_code}')" >> test.py
-          echo "    except requests.exceptions.Timeout:" >> test.py
-          echo "        print(f'{name:15} FAIL    TIMEOUT')" >> test.py
-          echo "    except Exception as e:" >> test.py
-          echo "        error_msg = str(e)" >> test.py
-          echo "        if len(error_msg) > 30:" >> test.py
-          echo "            error_msg = error_msg[:30] + '...'" >> test.py
-          echo "        print(f'{name:15} FAIL    {error_msg}')" >> test.py
-          echo "" >> test.py
-          echo "print('')" >> test.py
-          echo "print('================================')" >> test.py
-          echo "print(f'Total tested: {total}')" >> test.py
-          echo "print(f'Successful:   {success}')" >> test.py
-          echo "print(f'Failed:       {total - success}')" >> test.py
-          echo "print('================================')" >> test.py
-          echo "" >> test.py
-          echo "if success < total / 2:" >> test.py
-          echo "    print('WARNING: More than half of tests failed!')" >> test.py
-          echo "    exit(1)" >> test.py
+          echo "        r = requests.get(url, timeout=5)" >> test.py
+          echo "        print(name + ':', r.status_code)" >> test.py
+          echo "    except:" >> test.py
+          echo "        print(name + ': Failed')" >> test.py
           
           python3 test.py

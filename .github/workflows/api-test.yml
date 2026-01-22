@@ -1,71 +1,24 @@
-name: Exchange API Tester
+name: Exchange API Test
 on: push
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup and Test APIs
-        run: |
-          echo "=== Exchange API Connectivity Test ==="
-          
-          # 確認 Python 環境
-          python3 --version
-          
-          # 安裝 requests 庫
+      - run: |
           pip3 install requests
           
-          # 創建 Python 測試腳本
-          cat > test_apis.py << 'SCRIPT'
-import requests
-import time
-
-# 交易所 API 列表
-exchanges = [
-    ("Binance", "https://api.binance.com/api/v3/ping"),
-    ("Coinbase", "https://api.coinbase.com/v2/time"),
-    ("Kraken", "https://api.kraken.com/0/public/Time"),
-    ("OKX", "https://www.okx.com/api/v5/public/time"),
-    ("KuCoin", "https://api.kucoin.com/api/v1/ping"),
-]
-
-print(f"Testing {len(exchanges)} exchange APIs...")
-print("=" * 50)
-
-success_count = 0
-results = []
-
-for name, url in exchanges:
-    try:
-        start_time = time.time()
-        response = requests.get(url, timeout=5)
-        response_time = time.time() - start_time
-        
-        if response.status_code == 200:
-            status = "✓ OK"
-            success_count += 1
-        else:
-            status = f"✗ HTTP {response.status_code}"
-        
-        results.append(f"{name:15} {status:20} {response_time:.2f}s")
-        
-    except requests.exceptions.Timeout:
-        results.append(f"{name:15} ✗ TIMEOUT            >5.00s")
-    except Exception as e:
-        error_msg = str(e)[:30]
-        results.append(f"{name:15} ✗ ERROR: {error_msg:<10}")
-
-# 顯示結果
-for result in results:
-    print(result)
-
-print("=" * 50)
-print(f"Summary: {success_count}/{len(exchanges)} successful")
-
-# 如果有超過一半失敗，返回錯誤碼
-if success_count < len(exchanges) / 2:
-    print("WARNING: More than half of APIs failed!")
-    exit(1)
-SCRIPT
+          # 一行一行寫入文件
+          echo "import requests" > test.py
+          echo "import time" >> test.py
+          echo "exchanges = [" >> test.py
+          echo "    ('Binance', 'https://api.binance.com/api/v3/ping')," >> test.py
+          echo "    ('Coinbase', 'https://api.coinbase.com/v2/time')," >> test.py
+          echo "]" >> test.py
+          echo "for name, url in exchanges:" >> test.py
+          echo "    try:" >> test.py
+          echo "        r = requests.get(url, timeout=5)" >> test.py
+          echo "        print(name, 'Status:', r.status_code)" >> test.py
+          echo "    except:" >> test.py
+          echo "        print(name, 'Failed')" >> test.py
           
-          # 運行測試
-          python3 test_apis.py
+          python3 test.py

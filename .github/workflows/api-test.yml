@@ -3,11 +3,6 @@ name: API Connectivity Test
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  schedule:
-    - cron: '0 */6 * * *'
-  workflow_dispatch:
 
 jobs:
   api-test:
@@ -18,133 +13,56 @@ jobs:
       uses: actions/checkout@v3
       
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v3
       with:
-        python-version: '3.9'
+        python-version: '3.7'
         
-    - name: Install dependencies
+    - name: Install aiohttp
       run: pip install aiohttp
         
     - name: Create test script
       run: |
-        # 創建Python測試腳本
-        cat > test_api.py << 'PYTHON_SCRIPT'
+        cat > api_test.py << 'END_PYTHON'
 import asyncio
 import aiohttp
-import time
 
-async def test_exchange(session, name, url):
-    try:
-        start_time = time.time()
-        async with session.get(url, timeout=5) as response:
-            elapsed_time = time.time() - start_time
-            if response.status == 200:
-                return {
-                    "name": name,
-                    "status": "success",
-                    "response_time": elapsed_time,
-                    "status_code": response.status
-                }
-            else:
-                return {
-                    "name": name,
-                    "status": "failed",
-                    "response_time": elapsed_time,
-                    "status_code": response.status
-                }
-    except asyncio.TimeoutError:
-        return {
-            "name": name,
-            "status": "timeout",
-            "response_time": 5.0,
-            "status_code": None
-        }
-    except Exception as e:
-        return {
-            "name": name,
-            "status": "error",
-            "response_time": 0,
-            "status_code": None,
-            "error": str(e)
-        }
-
-async def main():
-    print("Starting API connectivity test")
-    print("=" * 50)
-    
-    # 測試列表
+async def test_api():
     exchanges = [
         ("Binance", "https://api.binance.com/api/v3/ping"),
-        ("KuCoin", "https://api.kucoin.com/api/v1/ping"),
-        ("OKX", "https://www.okx.com/api/v5/public/time"),
         ("Coinbase", "https://api.coinbase.com/v2/time"),
-        ("Kraken", "https://api.kraken.com/0/public/Time")
+        ("Kraken", "https://api.kraken.com/0/public/Time"),
     ]
     
-    print(f"Testing {len(exchanges)} exchanges")
+    success = 0
+    total = len(exchanges)
     
-    # 創建會話
     async with aiohttp.ClientSession() as session:
-        # 創建任務列表
-        tasks = []
-        for exchange in exchanges:
-            name, url = exchange
-            task = test_exchange(session, name, url)
-            tasks.append(task)
-        
-        # 執行所有測試
-        results = await asyncio.gather(*tasks)
+        for name, url in exchanges:
+            try:
+                async with session.get(url, timeout=5) as resp:
+                    if resp.status == 200:
+                        print("OK: " + name)
+                        success = success + 1
+                    else:
+                        print("FAIL: " + name + " - HTTP " + str(resp.status))
+            except Exception as error:
+                error_msg = str(error)
+                if len(error_msg) > 100:
+                    error_msg = error_msg[:100]
+                print("ERROR: " + name + " - " + error_msg)
     
-    # 顯示結果
-    print("\nTest Results:")
-    print("-" * 50)
+    print("")
+    print("Total: " + str(total))
+    print("Success: " + str(success))
+    print("Failed: " + str(total - success))
     
-    success_count = 0
-    total_response_time = 0
-    
-    for result in results:
-        name = result["name"]
-        status = result["status"]
-        response_time = result["response_time"]
-        status_code = result.get("status_code")
-        
-        if status == "success":
-            success_count += 1
-            total_response_time += response_time
-            print(f"✓ {name}: Success (Status: {status_code}, Time: {response_time:.2f}s)")
-        elif status == "failed":
-            print(f"✗ {name}: Failed (Status: {status_code}, Time: {response_time:.2f}s)")
-        elif status == "timeout":
-            print(f"✗ {name}: Timeout (over 5 seconds)")
-        else:
-            error_msg = result.get("error", "Unknown error")
-            print(f"✗ {name}: Error - {error_msg}")
-    
-    print("-" * 50)
-    print(f"Summary: {success_count}/{len(exchanges)} successful")
-    
-    if success_count > 0:
-        avg_time = total_response_time / success_count
-        print(f"Average response time: {avg_time:.2f} seconds")
-    
-    # 如果成功率低於50%，則標記為失敗
-    if success_count < len(exchanges) / 2:
-        print("WARNING: Less than 50% of tests passed!")
+    if success < total / 2:
+        print("WARNING: More than half of tests failed")
         exit(1)
 
-# 運行主函數
 if __name__ == "__main__":
-    asyncio.run(main())
-PYTHON_SCRIPT
+    asyncio.run(test_api())
+END_PYTHON
         
     - name: Run API test
-      run: python3 test_api.py
-        
-    - name: Generate final report
-      if: always()
-      run: |
-        echo "================================"
-        echo "API Connectivity Test Completed"
-        echo "================================"
-        echo "Time: $(date)"
-        echo "See details above for results."
+      run: python api_test.py

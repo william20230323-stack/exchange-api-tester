@@ -1,4 +1,4 @@
-name: Exchange API Test
+name: Full Exchange API Test
 on: push
 jobs:
   test:
@@ -7,18 +7,22 @@ jobs:
       - run: |
           pip3 install requests
           
-          # 一行一行寫入文件
           echo "import requests" > test.py
-          echo "import time" >> test.py
           echo "exchanges = [" >> test.py
           echo "    ('Binance', 'https://api.binance.com/api/v3/ping')," >> test.py
           echo "    ('Coinbase', 'https://api.coinbase.com/v2/time')," >> test.py
+          echo "    ('Kraken', 'https://api.kraken.com/0/public/Time')," >> test.py
+          echo "    ('OKX', 'https://www.okx.com/api/v5/public/time')," >> test.py
+          echo "    ('Bybit', 'https://api.bybit.com/v5/market/time')," >> test.py
+          echo "    ('Gate.io', 'https://api.gate.io/api/v4/spot/tickers')," >> test.py
+          echo "    ('MEXC', 'https://api.mexc.com/api/v3/ping')," >> test.py
           echo "]" >> test.py
+          
           echo "for name, url in exchanges:" >> test.py
           echo "    try:" >> test.py
           echo "        r = requests.get(url, timeout=5)" >> test.py
-          echo "        print(name, 'Status:', r.status_code)" >> test.py
+          echo "        print(name + ':', r.status_code)" >> test.py
           echo "    except:" >> test.py
-          echo "        print(name, 'Failed')" >> test.py
+          echo "        print(name + ': Failed')" >> test.py
           
           python3 test.py

@@ -1,68 +1,43 @@
-name: API Connectivity Test
-
-on:
-  push:
-    branches: [ main ]
-
+name: API Test
+on: push
 jobs:
-  api-test:
+  test:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-      
-    - name: Set up Python
-      uses: actions/setup-python@v3
-      with:
-        python-version: '3.7'
-        
-    - name: Install aiohttp
-      run: pip install aiohttp
-        
-    - name: Create test script
-      run: |
-        cat > api_test.py << 'END_PYTHON'
-import asyncio
-import aiohttp
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v3
+        with:
+          python-version: '3.9'
+      - run: pip install requests
+      - run: python -c "
+import requests
+import sys
 
-async def test_api():
-    exchanges = [
-        ("Binance", "https://api.binance.com/api/v3/ping"),
-        ("Coinbase", "https://api.coinbase.com/v2/time"),
-        ("Kraken", "https://api.kraken.com/0/public/Time"),
-    ]
-    
-    success = 0
-    total = len(exchanges)
-    
-    async with aiohttp.ClientSession() as session:
-        for name, url in exchanges:
-            try:
-                async with session.get(url, timeout=5) as resp:
-                    if resp.status == 200:
-                        print("OK: " + name)
-                        success = success + 1
-                    else:
-                        print("FAIL: " + name + " - HTTP " + str(resp.status))
-            except Exception as error:
-                error_msg = str(error)
-                if len(error_msg) > 100:
-                    error_msg = error_msg[:100]
-                print("ERROR: " + name + " - " + error_msg)
-    
-    print("")
-    print("Total: " + str(total))
-    print("Success: " + str(success))
-    print("Failed: " + str(total - success))
-    
-    if success < total / 2:
-        print("WARNING: More than half of tests failed")
-        exit(1)
+exchanges = [
+    ('Binance', 'https://api.binance.com/api/v3/ping'),
+    ('Coinbase', 'https://api.coinbase.com/v2/time'),
+    ('Kraken', 'https://api.kraken.com/0/public/Time')
+]
 
-if __name__ == "__main__":
-    asyncio.run(test_api())
-END_PYTHON
-        
-    - name: Run API test
-      run: python api_test.py
+success = 0
+total = len(exchanges)
+
+for name, url in exchanges:
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            print('OK: ' + name)
+            success += 1
+        else:
+            print('FAIL: ' + name + ' Status: ' + str(r.status_code))
+    except Exception as e:
+        print('ERROR: ' + name + ' - ' + str(e)[:100])
+
+print('')
+print('Total: ' + str(total))
+print('Success: ' + str(success))
+print('Failed: ' + str(total - success))
+
+if success < total / 2:
+    sys.exit(1)
+"

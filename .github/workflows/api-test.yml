@@ -1,98 +1,45 @@
-name: Exchange API 測試套件
+name: 交易所API測試
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
-  run-tests:
+  test-exchanges:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
+    
     steps:
-    - name: 檢出代碼
+    - name: 1. 檢出代碼
       uses: actions/checkout@v4
-
-    - name: 設置 Python 環境
-      uses: actions/setup-python@v5
+    
+    - name: 2. 設置Python
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-
-    - name: 安裝依賴
+    
+    - name: 3. 安裝依賴
       run: |
-        pip install --upgrade pip
         pip install aiohttp
-
-    - name: 🔍 測試 HTTP 連通性
+    
+    - name: 4. 創建測試腳本
       run: |
-        echo "開始測試交易所 HTTP 連通性..."
-        echo "========================================"
-        
-        # 更新並安裝 curl
-        sudo apt-get update -q
-        sudo apt-get install -y curl
-        
-        # 交易所 API 列表
-        declare -A exchanges=(
-          ["Binance"]="https://api.binance.com/api/v3/ping"
-          ["KuCoin"]="https://api.kucoin.com/api/v1/ping"
-          ["Gate.io"]="https://api.gateio.ws/api/v4/spot/tickers"
-          ["MEXC"]="https://api.mexc.com/api/v3/ping"
-          ["Huobi"]="https://api.huobi.pro/market/detail/merged"
-          ["Bitget"]="https://api.bitget.com/api/spot/v1/market/ticker"
-          ["OKX"]="https://www.okx.com/api/v5/market/ticker"
-          ["Pionex"]="https://api.pionex.com/api/v1/market/ticker"
-        )
-        
-        success_count=0
-        total_count=0
-        
-        for name in "${!exchanges[@]}"; do
-          url="${exchanges[$name]}"
-          ((total_count++))
-          
-          echo -n "測試 $name... "
-          
-          # 簡單的連接測試，不檢查狀態碼
-          if curl --silent --connect-timeout 5 --max-time 10 --output /dev/null "$url"; then
-            echo "✅ 成功"
-            ((success_count++))
-          else
-            echo "❌ 失敗"
-          fi
-        done
-        
-        echo "========================================"
-        echo "HTTP連通性結果: $success_count/$total_count"
-        echo "測試時間: $(date '+%Y-%m-%d %H:%M:%S')"
-
-    - name: 📡 運行 API 數據測試
-      run: |
-        echo "開始 API 數據測試..."
-        
-        # 創建 scripts 目錄
         mkdir -p scripts
-        
-        # 創建簡單的 Python 測試腳本
-        cat > scripts/test_exchanges.py << 'EOF'
-#!/usr/bin/env python3
+        cat > scripts/quick_test.py << 'EOF'
 import asyncio
 import aiohttp
 import time
-from datetime import datetime
 
 async def main():
-    print("=" * 50)
-    print("交易所 API 測試")
-    print(f"開始時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 50)
+    print("🔍 開始測試交易所API連通性...")
+    print("=" * 40)
     
-    exchanges = [
+    # 測試列表
+    tests = [
         ("Binance", "https://api.binance.com/api/v3/ping"),
         ("KuCoin", "https://api.kucoin.com/api/v1/ping"),
         ("Gate.io", "https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT"),
@@ -106,83 +53,37 @@ async def main():
     results = []
     
     async with aiohttp.ClientSession() as session:
-        for name, url in exchanges:
+        for name, url in tests:
             start = time.time()
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.get(url, timeout=10) as response:
                     elapsed = time.time() - start
-                    if resp.status == 200:
+                    if response.status == 200:
                         print(f"✅ {name}: 成功 ({elapsed*1000:.0f}ms)")
-                        results.append((name, True, elapsed))
+                        results.append((name, True))
                     else:
-                        print(f"⚠️  {name}: HTTP {resp.status} ({elapsed*1000:.0f}ms)")
-                        results.append((name, False, elapsed))
+                        print(f"❌ {name}: 失敗 (HTTP {response.status})")
+                        results.append((name, False))
             except Exception as e:
                 elapsed = time.time() - start
-                print(f"❌ {name}: {type(e).__name__} ({elapsed*1000:.0f}ms)")
-                results.append((name, False, elapsed))
+                print(f"❌ {name}: 錯誤 ({type(e).__name__})")
+                results.append((name, False))
     
-    print("=" * 50)
-    
-    # 生成報告
+    print("=" * 40)
     success = sum(1 for r in results if r[1])
     total = len(results)
-    
-    report = [
-        "=" * 40,
-        "交易所 API 測試報告",
-        f"時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "=" * 40
-    ]
-    
-    for name, ok, elapsed in results:
-        status = "✅ 成功" if ok else "❌ 失敗"
-        report.append(f"{name:10} {status} ({elapsed*1000:.0f}ms)")
-    
-    report.append("=" * 40)
-    report.append(f"成功率: {success}/{total} ({success/total*100:.1f}%)")
-    report.append("=" * 40)
-    
-    # 保存報告
-    filename = f"api_test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(filename, 'w') as f:
-        f.write("\n".join(report))
-    
-    print(f"報告已保存: {filename}")
-    print(f"成功率: {success}/{total} ({success/total*100:.1f}%)")
+    print(f"📊 結果: {success}/{total} 成功")
+    print(f"🏆 成功率: {success/total*100:.1f}%")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 EOF
-        
-        # 運行測試
-        cd scripts
-        python test_exchanges.py
-
-    - name: 💾 保存測試報告
-      uses: actions/upload-artifact@v4
-      with:
-        name: api-test-results
-        path: |
-          scripts/api_test_report_*.txt
-          api_test_report_*.txt
-        retention-days: 30
-
-    - name: 📝 生成測試摘要
+    
+    - name: 5. 運行測試
       run: |
-        echo "## 📊 API 測試結果摘要" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**完成時間:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # 尋找報告文件
-        for report in scripts/api_test_report_*.txt api_test_report_*.txt; do
-          if [ -f "$report" ]; then
-            echo "**測試結果:**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat "$report" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            break
-          fi
-        done
+        cd scripts
+        python quick_test.py
+    
+    - name: 6. 完成
+      run: |
+        echo "🎉 測試完成！"
+        echo "檢查上方輸出查看各交易所連通狀態。"

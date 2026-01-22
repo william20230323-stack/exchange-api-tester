@@ -1,32 +1,71 @@
-name: Exchange API Test
+name: Exchange API Tester
 on: push
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Test Exchange APIs
+      - name: Setup and Test APIs
         run: |
-          echo "=== Testing Exchange APIs ==="
+          echo "=== Exchange API Connectivity Test ==="
           
-          echo "1. Testing Binance..."
-          if curl -s --max-time 5 https://api.binance.com/api/v3/ping > /dev/null; then
-            echo "✓ Binance: OK"
-          else
-            echo "✗ Binance: FAILED"
-          fi
+          # 確認 Python 環境
+          python3 --version
           
-          echo "2. Testing Coinbase..."
-          if curl -s --max-time 5 https://api.coinbase.com/v2/time > /dev/null; then
-            echo "✓ Coinbase: OK"
-          else
-            echo "✗ Coinbase: FAILED"
-          fi
+          # 安裝 requests 庫
+          pip3 install requests
           
-          echo "3. Testing Kraken..."
-          if curl -s --max-time 5 https://api.kraken.com/0/public/Time > /dev/null; then
-            echo "✓ Kraken: OK"
-          else
-            echo "✗ Kraken: FAILED"
-          fi
+          # 創建 Python 測試腳本
+          cat > test_apis.py << 'SCRIPT'
+import requests
+import time
+
+# 交易所 API 列表
+exchanges = [
+    ("Binance", "https://api.binance.com/api/v3/ping"),
+    ("Coinbase", "https://api.coinbase.com/v2/time"),
+    ("Kraken", "https://api.kraken.com/0/public/Time"),
+    ("OKX", "https://www.okx.com/api/v5/public/time"),
+    ("KuCoin", "https://api.kucoin.com/api/v1/ping"),
+]
+
+print(f"Testing {len(exchanges)} exchange APIs...")
+print("=" * 50)
+
+success_count = 0
+results = []
+
+for name, url in exchanges:
+    try:
+        start_time = time.time()
+        response = requests.get(url, timeout=5)
+        response_time = time.time() - start_time
+        
+        if response.status_code == 200:
+            status = "✓ OK"
+            success_count += 1
+        else:
+            status = f"✗ HTTP {response.status_code}"
+        
+        results.append(f"{name:15} {status:20} {response_time:.2f}s")
+        
+    except requests.exceptions.Timeout:
+        results.append(f"{name:15} ✗ TIMEOUT            >5.00s")
+    except Exception as e:
+        error_msg = str(e)[:30]
+        results.append(f"{name:15} ✗ ERROR: {error_msg:<10}")
+
+# 顯示結果
+for result in results:
+    print(result)
+
+print("=" * 50)
+print(f"Summary: {success_count}/{len(exchanges)} successful")
+
+# 如果有超過一半失敗，返回錯誤碼
+if success_count < len(exchanges) / 2:
+    print("WARNING: More than half of APIs failed!")
+    exit(1)
+SCRIPT
           
-          echo "=== Test Complete ==="
+          # 運行測試
+          python3 test_apis.py
